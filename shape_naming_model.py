@@ -17,6 +17,8 @@ DEFAULT_GAIN = 1
 DEFAULT_BIAS = -2
 DEFAULT_WEIGHT_INIT_SCALE = 2e-2
 
+DEFAULT_NAME = 'Shape-Naming'
+
 # Runtime/training parameters
 DEFAULT_STOPPING_THRESHOLD = 1e-4
 
@@ -37,16 +39,18 @@ NUM_TASKS = 2
 
 
 class ShapeNamingModel:
-    def __init__(self, num_features, weight_file=None, learning=pnl.Enabled, *,
+    def __init__(self, num_features, fast_path=True, weight_file=None, learning=pnl.LEARNING, *,
                  hidden_layer_size=DEFAULT_HIDDEN_LAYER_SIZE,
                  learning_rate=DEFAULT_LEARNING_RATE,
                  fast_layer_size=DEFAULT_FAST_LAYER_SIZE,
                  fast_learning_rate=DEFAULT_FAST_LEARNING_RATE,
                  bias=DEFAULT_BIAS,
                  gain=DEFAULT_GAIN,
-                 weight_init_scale=DEFAULT_WEIGHT_INIT_SCALE):
+                 weight_init_scale=DEFAULT_WEIGHT_INIT_SCALE,
+                 name=DEFAULT_NAME):
 
         self.num_features = num_features
+        self.fast_path = fast_path
         if weight_file is not None:
             self.loaded_weights = io.loadmat(weight_file)
         else:
@@ -60,6 +64,7 @@ class ShapeNamingModel:
         self.bias = bias
         self.gain = gain
         self.weight_init_scale = weight_init_scale
+        self.name = name
 
         self._generate_layers()
         self._generate_processes()
@@ -78,28 +83,34 @@ class ShapeNamingModel:
         self.shape_hidden_layer = pnl.TransferMechanism(size=self.hidden_layer_size,
                                                         name='shape_hidden',
                                                         function=pnl.Logistic(gain=self.gain, bias=self.bias))
-        self.fast_shape_layer = pnl.TransferMechanism(size=self.fast_layer_size,
-                                                      name='fast_shape',
-                                                      function=pnl.Logistic(gain=self.gain, bias=self.bias))
+        if self.fast_path:
+            self.fast_shape_layer = pnl.TransferMechanism(size=self.fast_layer_size,
+                                                          name='fast_shape',
+                                                          function=pnl.Logistic(gain=self.gain, bias=self.bias))
 
         # Output layers
-        self.output_layer = self.color_hidden_layer = pnl.TransferMechanism(size=self.num_features,
-                                                                            name='output',
-                                                                            function=pnl.Logistic(gain=self.gain, bias=self.bias))
+        self.output_layer = pnl.TransferMechanism(size=self.num_features,
+                                                  name='output',
+                                                  function=pnl.Logistic(gain=self.gain, bias=self.bias))
 
     def _should_load(self, key):
         return self.loaded_weights is not None and key in self.loaded_weights
 
-    def _generate_process(self, weight_key, in_size, out_size, in_layer, out_layer, name):
+    def _generate_process(self, weight_key, in_size, out_size, in_layer, out_layer, name, learning_rate=None):
         if self._should_load(weight_key):
             weights = self.loaded_weights[weight_key].T
         else:
             weights = pnl.random_matrix(in_size, out_size, 2, -1) * self.weight_init_scale
 
-        procces = pnl.Process(pathway=[in_layer, weights, out_layer],
+        process = pnl.Process(pathway=[in_layer, weights, out_layer],
                               name=name, learning=self.learning)
-        self.processes.append(procces)
-        return procces
+        self.processes.append(process)
+
+        if learning_rate is None:
+            learning_rate = self.learning_rate
+        process.pathway[1].learning_mechanism.learning_rate = learning_rate
+
+        return process
 
     def _generate_processes(self):
         self.processes = []
@@ -120,7 +131,7 @@ class ShapeNamingModel:
 
         self.task_shape_hidden_process = self._generate_process(TASK_SHAPE_HIDDEN_KEY,
                                                                 NUM_TASKS, self.hidden_layer_size,
-                                                                self.task_layer, self.color_hidden_layer,
+                                                                self.task_layer, self.shape_hidden_layer,
                                                                 'task-shape-hidden-proc')
 
         self.color_output_process = self._generate_process(COLOR_OUTPUT_KEY,
@@ -133,21 +144,23 @@ class ShapeNamingModel:
                                                            self.shape_hidden_layer, self.output_layer,
                                                            'shape-output-proc')
 
-        self.shape_fast_process = self._generate_process(SHAPE_FAST_KEY,
-                                                         self.hidden_layer_size, self.fast_layer_size,
-                                                         self.shape_hidden_layer, self.fast_shape_layer,
-                                                         'shape-fast-proc')
+        if self.fast_path:
+            self.shape_fast_process = self._generate_process(SHAPE_FAST_KEY,
+                                                             self.hidden_layer_size, self.fast_layer_size,
+                                                             self.shape_hidden_layer, self.fast_shape_layer,
+                                                             'shape-fast-proc', self.fast_learning_rate)
 
-        self.fast_output_process = self._generate_process(FAST_OUTPUT_KEY,
-                                                          self.fast_layer_size, self.num_features,
-                                                          self.fast_shape_layer, self.output_layer,
-                                                          'fast-output-proc')
+            self.fast_output_process = self._generate_process(FAST_OUTPUT_KEY,
+                                                              self.fast_layer_size, self.num_features,
+                                                              self.fast_shape_layer, self.output_layer,
+                                                              'fast-output-proc', self.fast_learning_rate)
 
     def _generate_system(self):
-        # TODO: deal with setting different learning rate for fast layer
+        # Adding learning rates to processes, as they have different ones, rather than here
         self.system = pnl.System(
+            name=self.name,
             processes=self.processes,
-            learning_rate=self.learning_rate
+            # learning_rate=self.learning_rate
         )
 
     def train(self, inputs, task, target, iterations=1, randomize=True, save_path=None, threshold=DEFAULT_STOPPING_THRESHOLD):
@@ -204,7 +217,7 @@ class ShapeNamingModel:
                 })
 
             if mse < threshold:
-                print('MSE smaller than threshold ({threshold}, breaking'.format(threshold=threshold))
+                print('MSE smaller than threshold ({threshold}), breaking'.format(threshold=threshold))
                 break
 
         return mse_log, {

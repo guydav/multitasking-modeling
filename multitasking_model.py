@@ -3,6 +3,7 @@ import psyneulink as pnl
 import itertools
 from sklearn.metrics import mean_squared_error
 from scipy import io
+import time
 
 
 # Setting up default network parameters
@@ -13,6 +14,7 @@ DEFAULT_DECAY = 0
 DEFAULT_BIAS = -2
 DEFAULT_WEIGHT_INIT_SCALE = 2e-2
 DEFAULT_HIDDEN_LAYER_SIZE = 200
+DEFAULT_NAME = 'Multitasking'
 
 # Runtime/training parameters
 DEFAULT_STOPPING_THRESHOLD = 1e-4
@@ -32,7 +34,8 @@ class MultitaskingModel:
                  weight_init_scale=DEFAULT_WEIGHT_INIT_SCALE,
                  decay=DEFAULT_DECAY,
                  hidden_path_size=DEFAULT_HIDDEN_PATH_SIZE,
-                 output_path_size=DEFAULT_OUTPUT_PATH_SIZE):
+                 output_path_size=DEFAULT_OUTPUT_PATH_SIZE,
+                 name=DEFAULT_NAME):
 
         self.num_dimensions = num_dimensions
         self.num_features = num_features
@@ -49,6 +52,7 @@ class MultitaskingModel:
         self.decay = decay
         self.hidden_path_size = hidden_path_size
         self.output_path_size = output_path_size
+        self.name = name
 
         # implement equivalents of setData, configure, and constructor
         self.num_tasks = self.num_dimensions ** 2
@@ -165,7 +169,8 @@ class MultitaskingModel:
                             name='output-bias-proc-{o}'.format(o=index)))
 
     def _generate_system(self):
-        self.system = pnl.System(processes=self.input_hidden_processes +
+        self.system = pnl.System(name=self.name,
+                                 processes=self.input_hidden_processes +
                                            self.hidden_output_processes +
                                            self.task_output_processes +
                                            self.input_output_processes +
@@ -176,6 +181,7 @@ class MultitaskingModel:
 
     def train(self, inputs, task, target, iterations=1, randomize=True, save_path=None, threshold=DEFAULT_STOPPING_THRESHOLD):
         mse_log = []
+        times = []
 
         outputs = np.zeros((iterations, *inputs.shape))
         task_hidden_weights = np.zeros((iterations, *self.task_hidden_process.pathway[1].function_params['matrix'][0].shape))
@@ -188,6 +194,8 @@ class MultitaskingModel:
 
         for iteration in range(iterations):
             print('Starting iteration {iter}'.format(iter=iteration + 1))
+            times.append(time.time())
+
             num_trials = inputs.shape[0]
             if randomize:
                 perm = np.random.permutation(num_trials)
@@ -221,6 +229,7 @@ class MultitaskingModel:
             if save_path:
                 io.savemat(save_path, {
                     'outputs': outputs,
+                    'mse': mse_log,
                     TASK_HIDDEN_KEY: task_hidden_weights,
                     INPUT_HIDDEN_KEY: input_hidden_weights,
                     TASK_OUTPUT_KEY: task_output_weights,
@@ -228,7 +237,7 @@ class MultitaskingModel:
                 })
 
             if mse < threshold:
-                print('MSE smaller than threshold ({threshold}, breaking'.format(threshold=threshold))
+                print('MSE smaller than threshold ({threshold}), breaking'.format(threshold=threshold))
                 break
 
         return mse_log, {
