@@ -16,11 +16,11 @@ def generate_inputs(num_dimensions, num_features):
     return np.array([np.array(p) for p in itertools.product(base_perm, repeat=num_dimensions)])
 
 
-def generate_tasks(num_dimensions, out_dimensions=None):
-    if out_dimensions is None:
-        out_dimensions = num_dimensions
+def generate_tasks(num_dimensions, num_out_dimensions=None):
+    if num_out_dimensions is None:
+        num_out_dimensions = num_dimensions
 
-    units = num_dimensions * out_dimensions
+    units = num_dimensions * num_out_dimensions
 
     # generate base vector
     base = np.zeros((1, units))
@@ -34,22 +34,27 @@ def generate_tasks(num_dimensions, out_dimensions=None):
 
     # Generate a map of dimensions mapped by each task
     task_numbers = np.arange(units)
-    task_map = np.reshape(task_numbers, (num_dimensions, out_dimensions))
+    task_map = np.reshape(task_numbers, (num_dimensions, num_out_dimensions))
 
     return tasks, task_map
 
 
-def generate_training_patterns(num_dimensions, num_features, inputs=None, tasks=None, task_map=None):
+def generate_training_patterns(num_dimensions, num_features, num_out_dimensions=None,
+                               inputs=None, tasks=None, task_map=None):
+
+    if num_out_dimensions is None:
+        num_out_dimensions = num_dimensions
+
     if inputs is None:
         inputs = generate_inputs(num_dimensions, num_features)
 
     if tasks is None or task_map is None:
-        tasks, task_map = generate_tasks(num_dimensions)
+        tasks, task_map = generate_tasks(num_dimensions, num_out_dimensions)
 
     num_cases = len(inputs) * len(tasks)
 
     # changed to a tensor to support the sort of indexing I need
-    target_patterns = np.zeros((num_cases, num_dimensions, num_features))
+    target_patterns = np.zeros((num_cases, num_out_dimensions, num_features))
     input_patterns = np.zeros((num_cases, num_dimensions, num_features))
     task_patterns = np.zeros((num_cases, np.size(tasks, 1)))
     in_out_map = np.zeros((num_cases, task_map.ndim))  # logs dim map per trial

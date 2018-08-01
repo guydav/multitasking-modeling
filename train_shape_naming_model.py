@@ -2,35 +2,33 @@ import numpy as np
 import psyneulink as pnl
 import shape_naming_model
 from pattern_generation import generate_training_patterns
+import os
 
 # Setting up defaults
 DEFAULT_TRAIN_ITERATIONS = 500
 DEFAULT_NUM_FEATURES = 2
+NUM_INPUT_DIMENSIONS = 2
+NUM_OUTPUT_DIMENSIONS = 1
+
+FOLDER = r'/Users/guydavidson/projects/nivlab/multitasking-modeling/shape-naming-results'
 
 
 def main():
-    model = shape_naming_model.ShapeNamingModel(DEFAULT_NUM_FEATURES)
-    model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL,
-                            show_processes=pnl.ALL)
+    input_patterns, task_patterns, in_out_map, target_patterns = \
+        generate_training_patterns(NUM_INPUT_DIMENSIONS, DEFAULT_NUM_FEATURES, NUM_OUTPUT_DIMENSIONS)
 
-    # model = single_layer_multitasking_model.SingleLayerMultitaskingModel(DEFAULT_NUM_DIMENSIONS,
-    #                                                                      DEFAULT_NUM_FEATURES_PER_DIMENSION,
-    #                                                                      WEIGHT_FILE)
-    # model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL, show_processes=pnl.ALL)
+    for hidden_size in range(2, 6):
+        print('Training model with {hs} hidden units per layer...'.format(hs=hidden_size))
+        model = shape_naming_model.ShapeNamingModel(DEFAULT_NUM_FEATURES, fast_path=False, hidden_layer_size=hidden_size,
+                                                    learning_rate=0.3, bias=-1)
 
-    # print(model.train([[[1, 0, 0, 0]], [[0, 1, 0, 0]], [[0, 0, 1, 0]]],
-    #           [[1, 0, 0, 0, 0, 0, 0, 0, 0]],
-    #           [[[1, 0, 0, 0]], [[0, 0, 0, 0]], [[0, 0, 0, 0]]]))
+        # model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL,
+        #                         show_processes=pnl.ALL)
 
-    # input_patterns, task_patterns, in_out_map, target_patterns = \
-    #     generate_training_patterns(DEFAULT_NUM_DIMENSIONS, DEFAULT_NUM_FEATURES_PER_DIMENSION)
-    # task_indices = np.argmax(task_patterns, 1)
-    # trial_indices = np.isin(task_indices, DEFUALT_TASK_IDS)
-    # # trial_indices = [0]
-    #
-    # mse_log, output_log = model.train(
-    #     input_patterns[trial_indices], task_patterns[trial_indices], target_patterns[trial_indices], 500,
-    #     False, r'/Users/guydavidson/projects/nivlab/multitasking-modeling/model-outputs.mat')
+        output_log = model.train(
+            input_patterns, task_patterns, target_patterns, 500,
+            False, os.path.join(FOLDER, 'shape-naming-no-fast-adj-bias-{hs}-hidden-units.mat'.format(hs=hidden_size)),
+            report_interval=5, repeats=10)
 
 
 if __name__ == '__main__':

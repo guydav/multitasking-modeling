@@ -1,8 +1,8 @@
 import numpy as np
 import psyneulink as pnl
-import itertools
 from sklearn.metrics import mean_squared_error
 from scipy import io
+import time
 
 
 # Setting up default network parameters
@@ -163,58 +163,64 @@ class ShapeNamingModel:
             # learning_rate=self.learning_rate
         )
 
-    def train(self, inputs, task, target, iterations=1, randomize=True, save_path=None, threshold=DEFAULT_STOPPING_THRESHOLD):
-        mse_log = []
+    def _repeat_tile(self, array, repeats):
+        dims = np.ones(array.ndim, dtype=int)
+        dims[0] = repeats
+        return np.tile(array, dims)
 
-        outputs = np.zeros((iterations, *inputs.shape))
-        task_hidden_weights = np.zeros((iterations, *self.task_hidden_process.pathway[1].function_params['matrix'][0].shape))
-        input_hidden_weights = np.zeros((iterations, self.num_dimensions,
-                                         *self.input_hidden_processes[0].pathway[1].function_params['matrix'][0].shape))
-        task_output_weights = np.zeros((iterations, self.num_dimensions,
-                                        *self.task_output_processes[0].pathway[1].function_params['matrix'][0].shape))
-        hidden_output_weights = np.zeros((iterations, self.num_dimensions,
-                                          *self.hidden_output_processes[0].pathway[1].function_params['matrix'][0].shape))
+    def train(self, inputs, tasks, targets, iterations=1, randomize=True, save_path=None,
+              threshold=DEFAULT_STOPPING_THRESHOLD, report_interval=1, repeats=1):
+        mse_log = []
+        times = []
+        num_trials = inputs.shape[0] * repeats
+
+        outputs = np.zeros((iterations, num_trials, 1, np.product(targets.shape[1:])))
 
         for iteration in range(iterations):
-            print('Starting iteration {iter}'.format(iter=iteration + 1))
-            num_trials = inputs.shape[0]
+            if (iteration + 1) % report_interval == 0:
+                print('Starting iteration {iter}'.format(iter=iteration + 1))
+
+            times.append(time.time())
+
+            inputs_copy = self._repeat_tile(inputs, repeats)
+            task_copy = self._repeat_tile(tasks, repeats)
+            target_copy = self._repeat_tile(targets, repeats)
+
             if randomize:
                 perm = np.random.permutation(num_trials)
             else:
                 perm = range(num_trials)
 
-            input_copy = np.copy(inputs)
-            task_copy = np.copy(task)
-            target_copy = np.copy(target)
-
-            input_dict = {self.input_layers[i]: input_copy[perm, i, :] for i in range(self.num_dimensions)}
+            input_dict = dict()
+            for index, in_layer in enumerate([self.color_input_layer, self.shape_input_layer]):
+                input_dict[in_layer] = inputs_copy[perm, index, :]
             input_dict[self.task_layer] = task_copy[perm, :]
-            target_dict = {self.output_layers[i]: target_copy[perm, i, :] for i in range(self.num_dimensions)}
-
-            # TODO: remove this once default values properly supported
-            input_dict[self.hidden_bias] = np.ones((num_trials, self.hidden_layer_size)) * self.bias
-            input_dict.update({bias: np.ones((num_trials, self.num_features)) * self.bias for bias in self.output_biases})
+            target_dict = {self.output_layer: np.squeeze(target_copy[perm])}
 
             output = np.array(self.system.run(inputs=input_dict, targets=target_dict)[-num_trials:])
-            mse = mean_squared_error(np.ravel(target), np.ravel(output))
+            outputs[iteration] = output
+
+            mse = mean_squared_error(np.ravel(target_copy[perm]), np.ravel(output))
             mse_log.append(mse)
-            print('MSE after iteration {iter} is {mse}'.format(iter=iteration + 1, mse=mse))
 
-            outputs[iteration, :, :, :] = output
-            task_hidden_weights[iteration, :, :] = self.task_hidden_process.pathway[1].function_params['matrix'][0]
-            for index in range(self.num_dimensions):
-                input_hidden_weights[iteration, index, :, :] = self.input_hidden_processes[index].pathway[1].function_params['matrix'][0]
-                task_output_weights[iteration, index, :, :] = self.task_output_processes[index].pathway[1].function_params['matrix'][0]
-                hidden_output_weights[iteration, index, :, :] = self.hidden_output_processes[index].pathway[1].function_params['matrix'][0]
+            if (iteration + 1) % report_interval == 0:
+                print('MSE after iteration {iter} is {mse}'.format(iter=iteration + 1, mse=mse))
+                if save_path:
+                    io.savemat(save_path, {
+                        'outputs': outputs,
+                        'mse': mse_log,
+                        'times': times,
+                        # TASK_HIDDEN_KEY: task_hidden_weights,
+                        # INPUT_HIDDEN_KEY: input_hidden_weights,
+                        # TASK_OUTPUT_KEY: task_output_weights,
+                        # HIDDEN_OUTPUT_KEY: hidden_output_weights
+                    })
 
-            if save_path:
-                io.savemat(save_path, {
-                    'outputs': outputs,
-                    TASK_HIDDEN_KEY: task_hidden_weights,
-                    INPUT_HIDDEN_KEY: input_hidden_weights,
-                    TASK_OUTPUT_KEY: task_output_weights,
-                    HIDDEN_OUTPUT_KEY: hidden_output_weights
-                })
+            # task_hidden_weights[iteration, :, :] = self.task_hidden_process.pathway[1].function_params['matrix'][0]
+            # for index in range(self.num_dimensions):
+            #     input_hidden_weights[iteration, index, :, :] = self.input_hidden_processes[index].pathway[1].function_params['matrix'][0]
+            #     task_output_weights[iteration, index, :, :] = self.task_output_processes[index].pathway[1].function_params['matrix'][0]
+            #     hidden_output_weights[iteration, index, :, :] = self.hidden_output_processes[index].pathway[1].function_params['matrix'][0]
 
             if mse < threshold:
                 print('MSE smaller than threshold ({threshold}), breaking'.format(threshold=threshold))
@@ -223,9 +229,10 @@ class ShapeNamingModel:
         return mse_log, {
             'outputs': outputs,
             'mse': mse_log,
-            TASK_HIDDEN_KEY: task_hidden_weights,
-            INPUT_HIDDEN_KEY: input_hidden_weights,
-            TASK_OUTPUT_KEY: task_output_weights,
-            HIDDEN_OUTPUT_KEY: hidden_output_weights
+            'times': times,
+            # TASK_HIDDEN_KEY: task_hidden_weights,
+            # INPUT_HIDDEN_KEY: input_hidden_weights,
+            # TASK_OUTPUT_KEY: task_output_weights,
+            # HIDDEN_OUTPUT_KEY: hidden_output_weights
         }
 
