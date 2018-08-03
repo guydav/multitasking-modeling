@@ -17,17 +17,17 @@ def main():
     input_patterns, task_patterns, in_out_map, target_patterns = \
         generate_training_patterns(NUM_INPUT_DIMENSIONS, DEFAULT_NUM_FEATURES, NUM_OUTPUT_DIMENSIONS)
 
-    for hidden_size in range(2, 6):
-        print('Training model with {hs} hidden units per layer...'.format(hs=hidden_size))
-        model = shape_naming_model.ShapeNamingModel(DEFAULT_NUM_FEATURES, fast_path=False, hidden_layer_size=hidden_size,
-                                                    learning_rate=0.3, bias=-1)
+    for learning_rate in np.arange(0.1, 0.8, 0.1):
+        print('Training model with a learning rate of {lr}...'.format(lr=learning_rate))
+        model = shape_naming_model.ShapeNamingModel(DEFAULT_NUM_FEATURES, fast_path=False, hidden_layer_size=2,
+                                                    learning_rate=learning_rate, bias=-1)
 
         # model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL,
         #                         show_processes=pnl.ALL)
 
         output_log = model.train(
             input_patterns, task_patterns, target_patterns, 500,
-            False, os.path.join(FOLDER, 'shape-naming-no-fast-adj-bias-{hs}-hidden-units.mat'.format(hs=hidden_size)),
+            False, os.path.join(FOLDER, 'shape-naming-no-fast-adj-bias-2-hidden-units-lr-{lr}.mat'.format(lr=learning_rate)),
             report_interval=5, repeats=10)
 
 
