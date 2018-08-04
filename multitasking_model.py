@@ -1,6 +1,6 @@
 import numpy as np
 import psyneulink as pnl
-import itertools
+from psyneulink.compositions.parsingautodiffcomposition import ParsingAutodiffComposition
 from sklearn.metrics import mean_squared_error
 from scipy import io
 import time
@@ -58,20 +58,25 @@ class MultitaskingModel:
         self.num_tasks = self.num_dimensions ** 2
 
         # Here we would initialize the layer - instead initializing the PNL model:
+        self._generate_layers()
+        self._initialize_weights()
+        self._generate_processes()
+        self._generate_system()
+
+    def _generate_layers(self, bias=None, gain=1):
+        if not bias:
+            bias = -1 * self.bias
+
         self.task_layer = pnl.TransferMechanism(size=self.num_tasks,
                                                 name='task_input')
         self.hidden_layer = pnl.TransferMechanism(size=self.hidden_layer_size,
                                                   name='hidden',
-                                                  function=pnl.Logistic)
-        self.hidden_bias = pnl.TransferMechanism(default_variable=np.ones((self.hidden_layer_size,)) * self.bias,
-                                                 name='hidden bias')
+                                                  function=pnl.Logistic(bias=bias, gain=gain))
+        # self.hidden_bias = pnl.TransferMechanism(default_variable=np.ones((self.hidden_layer_size,)) * self.bias,
+        #                                          name='hidden bias')
         self.input_layers = self._generate_io_layers('input')
-        self.output_layers = self._generate_io_layers('output', func=pnl.Logistic)
-        self._generate_output_bias_layers()
-        self.input_output_processes = []
-        # self._generate_processes_product()
-        self._generate_processes()
-        self._generate_system()
+        self.output_layers = self._generate_io_layers('output', func=pnl.Logistic(bias=bias, gain=gain))
+        # self._generate_output_bias_layers()
 
     def _generate_io_layers(self, name, func=pnl.Linear):
         return [pnl.TransferMechanism(size=self.num_features,
@@ -85,77 +90,71 @@ class MultitaskingModel:
                                   name='output-bias-{i}'.format(i=i))
             for i in range(self.num_dimensions)]
 
-    # def _generate_processes_product(self):
-    #     for (input_index, output_index) in itertools.product(range(self.num_dimensions),
-    #                                                          range(self.num_dimensions)):
-    #         proc = pnl.Process(pathway=[self.input_layers[input_index],
-    #                                     pnl.random_matrix(self.num_features, self.hidden_layer_size, 2, -1) * self.weight_init_scale,
-    #                                     self.hidden_layer,
-    #                                     pnl.random_matrix(self.hidden_layer_size, self.num_features, 2, -1) * self.weight_init_scale,
-    #                                     self.output_layers[output_index]],
-    #                            name='input-{i}-output-{o}-proc'.format(i=input_index, o=output_index),
-    #                            learning=self.learning)
-    #
-    #         self.input_output_processes.append(proc)
+    def _initialize_weights(self):
+        if self._should_load(TASK_HIDDEN_KEY):
+            self.task_hidden_weights = self.loaded_weights[TASK_HIDDEN_KEY].T
+        else:
+            self.task_hidden_weights = pnl.random_matrix(self.num_tasks,
+                                                         self.hidden_layer_size, 2, -1) * self.weight_init_scale
+
+        if self._should_load(INPUT_HIDDEN_KEY):
+            self.input_hidden_weights = self.loaded_weights[INPUT_HIDDEN_KEY].T
+        else:
+            self.input_hidden_weights = pnl.random_matrix(self.num_features,
+                                                          self.hidden_layer_size, 2, -1) * self.weight_init_scale
+
+        if self._should_load(HIDDEN_OUTPUT_KEY):
+            self.hidden_output_weights = self.loaded_weights[HIDDEN_OUTPUT_KEY].T
+        else:
+            self.hidden_output_weights = pnl.random_matrix(self.hidden_layer_size,
+                                                           self.num_features, 2, -1) * self.weight_init_scale
+
+        if self._should_load(TASK_OUTPUT_KEY):
+            self.task_output_weights = self.loaded_weights[TASK_OUTPUT_KEY].T
+        else:
+            self.task_output_weights = pnl.random_matrix(self.num_tasks,
+                                                         self.num_features, 2, -1) * self.weight_init_scale
 
     def _should_load(self, key):
         return self.loaded_weights is not None and key in self.loaded_weights
 
     def _generate_processes(self):
-        if self._should_load(TASK_HIDDEN_KEY):
-            task_hidden_weights = self.loaded_weights[TASK_HIDDEN_KEY].T
-        else:
-            task_hidden_weights = pnl.random_matrix(self.num_tasks,
-                                                    self.hidden_layer_size, 2, -1) * self.weight_init_scale
+        self.input_output_processes = []
+
         self.task_hidden_process = pnl.Process(pathway=[self.task_layer,
-                                                        task_hidden_weights,
+                                                        self.task_hidden_weights,
                                                         self.hidden_layer],
                                                name='task-hidden-proc',
                                                learning=pnl.ENABLED)
 
-        self.hidden_bias_process = pnl.Process(pathway=[self.hidden_bias,
-                                                        self.hidden_layer],
-                                               name='hidden-bias-proc')
+        # self.hidden_bias_process = pnl.Process(pathway=[self.hidden_bias,
+        #                                                 self.hidden_layer],
+        #                                        name='hidden-bias-proc')
 
         self.input_hidden_processes = []
         self.hidden_output_processes = []
         self.task_output_processes = []
-        self.output_bias_processes = []
+        # self.output_bias_processes = []
 
         for index in range(self.num_dimensions):
-            if self._should_load(INPUT_HIDDEN_KEY):
-                input_hidden_weights = self.loaded_weights[INPUT_HIDDEN_KEY][:, index * self.num_features:
-                                                                                (index + 1) * self.num_features].T
-            else:
-                input_hidden_weights = pnl.random_matrix(self.num_features,
-                                                         self.hidden_layer_size, 2, -1) * self.weight_init_scale
-
+            input_hidden_weights = self.input_hidden_weights[:, index * self.num_features:
+                                                                (index + 1) * self.num_features].T
             self.input_hidden_processes.append(pnl.Process(pathway=[self.input_layers[index],
                                                                     input_hidden_weights,
                                                                     self.hidden_layer],
                                                            name='input-{i}-to-hidden-proc'.format(i=index),
                                                            learning=pnl.ENABLED))
 
-            if self._should_load(HIDDEN_OUTPUT_KEY):
-                hidden_output_weights = self.loaded_weights[HIDDEN_OUTPUT_KEY][index * self.num_features:
-                                                                               (index + 1) * self.num_features, :].T
-            else:
-                hidden_output_weights = pnl.random_matrix(self.hidden_layer_size,
-                                                          self.num_features, 2, -1) * self.weight_init_scale
-
+            hidden_output_weights = self.hidden_output_weights[index * self.num_features:
+                                                               (index + 1) * self.num_features, :].T
             self.hidden_output_processes.append(pnl.Process(pathway=[self.hidden_layer,
                                                                      hidden_output_weights,
                                                                      self.output_layers[index]],
                                                             name='hidden-to-output-{o}-proc'.format(o=index),
                                                             learning=pnl.ENABLED))
 
-            if self._should_load(TASK_OUTPUT_KEY):
-                task_output_weights = self.loaded_weights[TASK_OUTPUT_KEY][index * self.num_features:
-                                                                               (index + 1) * self.num_features, :].T
-            else:
-                task_output_weights = pnl.random_matrix(self.num_tasks,
-                                                        self.num_features, 2, -1) * self.weight_init_scale
-
+            task_output_weights = self.task_output_weights[index * self.num_features:
+                                                           (index + 1) * self.num_features, :].T
             self.task_output_processes.append(
                 pnl.Process(pathway=[self.task_layer,
                                      task_output_weights,
@@ -163,10 +162,10 @@ class MultitaskingModel:
                             name='task-output-proc-{o}'.format(o=index),
                             learning=pnl.ENABLED))
 
-            self.output_bias_processes.append(
-                pnl.Process(pathway=[self.output_biases[index],
-                                     self.output_layers[index]],
-                            name='output-bias-proc-{o}'.format(o=index)))
+            # self.output_bias_processes.append(
+            #     pnl.Process(pathway=[self.output_biases[index],
+            #                          self.output_layers[index]],
+            #                 name='output-bias-proc-{o}'.format(o=index)))
 
     def _generate_system(self):
         self.system = pnl.System(name=self.name,
@@ -174,12 +173,13 @@ class MultitaskingModel:
                                            self.hidden_output_processes +
                                            self.task_output_processes +
                                            self.input_output_processes +
-                                           self.output_bias_processes +
-                                           [self.task_hidden_process, self.hidden_bias_process],
+                                           # self.output_bias_processes +
+                                           [self.task_hidden_process],  #, self.hidden_bias_process],
                                  learning_rate=self.learning_rate
                                  )
 
-    def train(self, inputs, task, target, iterations=1, randomize=True, save_path=None, threshold=DEFAULT_STOPPING_THRESHOLD):
+    def train(self, inputs, task, target, iterations=1, randomize=True, save_path=None,
+              threshold=DEFAULT_STOPPING_THRESHOLD):
         mse_log = []
         times = []
 
@@ -211,8 +211,8 @@ class MultitaskingModel:
             target_dict = {self.output_layers[i]: target_copy[perm, i, :] for i in range(self.num_dimensions)}
 
             # TODO: remove this once default values properly supported
-            input_dict[self.hidden_bias] = np.ones((num_trials, self.hidden_layer_size)) * self.bias
-            input_dict.update({bias: np.ones((num_trials, self.num_features)) * self.bias for bias in self.output_biases})
+            # input_dict[self.hidden_bias] = np.ones((num_trials, self.hidden_layer_size)) * self.bias
+            # input_dict.update({bias: np.ones((num_trials, self.num_features)) * self.bias for bias in self.output_biases})
 
             output = np.array(self.system.run(inputs=input_dict, targets=target_dict)[-num_trials:])
             mse = mean_squared_error(np.ravel(target), np.ravel(output))
@@ -247,5 +247,88 @@ class MultitaskingModel:
             INPUT_HIDDEN_KEY: input_hidden_weights,
             TASK_OUTPUT_KEY: task_output_weights,
             HIDDEN_OUTPUT_KEY: hidden_output_weights
+        }
+
+
+class PyTorchMultitaskingModel(MultitaskingModel):
+    def __init__(self, num_dimensions, num_features, weight_file=None, learning=pnl.LEARNING, *,
+                 hidden_layer_size=DEFAULT_HIDDEN_LAYER_SIZE,
+                 learning_rate=DEFAULT_LEARNING_RATE,
+                 bias=DEFAULT_BIAS,
+                 weight_init_scale=DEFAULT_WEIGHT_INIT_SCALE,
+                 decay=DEFAULT_DECAY,
+                 hidden_path_size=DEFAULT_HIDDEN_PATH_SIZE,
+                 output_path_size=DEFAULT_OUTPUT_PATH_SIZE,
+                 name=DEFAULT_NAME):
+
+        self.composition = ParsingAutodiffComposition(param_init_from_pnl=True)
+        super(PyTorchMultitaskingModel, self).__init__(num_dimensions, num_features, weight_file,
+                                                       learning,
+                                                       hidden_layer_size=hidden_layer_size,
+                                                       learning_rate=learning_rate,
+                                                       bias=bias,
+                                                       weight_init_scale=weight_init_scale,
+                                                       decay=decay,
+                                                       hidden_path_size=hidden_path_size,
+                                                       output_path_size=output_path_size,
+                                                       name=name)
+
+    def _generate_layers(self, bias=0, gain=1):
+        # PNL subtracts bias rather than adding it, so we multiply by -1
+        super(PyTorchMultitaskingModel, self)._generate_layers(bias=-1 * self.bias)
+
+        for layer in self.input_layers + self.output_layers + [self.task_layer, self.hidden_layer]:
+            self.composition.add_c_node(layer)
+
+    def _generate_processes(self):
+        # task => hidden
+        self.composition.add_projection(sender=self.task_layer, projection=self.task_hidden_weights,
+                                        receiver=self.hidden_layer)
+
+        for index in range(self.num_dimensions):
+            input_hidden_weights = self.input_hidden_weights[index * self.num_features:
+                                                             (index + 1) * self.num_features, :]
+            # input => hidden
+            self.composition.add_projection(sender=self.input_layers[index],
+                                            projection=input_hidden_weights,
+                                            receiver=self.hidden_layer)
+
+            hidden_output_weights = self.hidden_output_weights[:, index * self.num_features:
+                                                                  (index + 1) * self.num_features]
+            # hidden => output
+            self.composition.add_projection(sender=self.hidden_layer,
+                                            projection=hidden_output_weights,
+                                            receiver=self.output_layers[index])
+
+            task_output_weights = self.task_output_weights[:, index * self.num_features:
+                                                              (index + 1) * self.num_features]
+            # task => output
+            self.composition.add_projection(sender=self.task_layer,
+                                            projection=task_output_weights,
+                                            receiver=self.output_layers[index])
+
+    def _generate_system(self):
+        pass
+
+    def train(self, inputs, task, target, iterations=1, randomize=True, save_path=None,
+              threshold=DEFAULT_STOPPING_THRESHOLD):
+        input_dict = {self.input_layers[index]: inputs[:, index * self.num_features:
+                                                          (index + 1) * self.num_features]
+                      for index in range(self.num_dimensions)}
+        input_dict[self.task_layer] = task
+        target_dict = {self.output_layers[index]: target[:, index * self.num_features:
+                                                            (index + 1) * self.num_features]
+                       for index in range(self.num_dimensions)}
+
+        if self.learning:
+            last_outputs = self.composition.run(inputs=input_dict, targets=target_dict, epochs=iterations,
+                                                randomize=randomize, learning_rate=self.learning_rate,
+                                                optimizer='sgd')
+        else:
+            last_outputs = self.composition.run(inputs=input_dict)
+
+        return {
+            'last_outputs': last_outputs,
+            'mse': self.composition.losses,
         }
 

@@ -1,7 +1,6 @@
 import numpy as np
 import psyneulink as pnl
 from psyneulink.compositions.parsingautodiffcomposition import ParsingAutodiffComposition
-import itertools
 from sklearn.metrics import mean_squared_error
 from scipy import io
 import time
@@ -63,7 +62,10 @@ class SingleLayerMultitaskingModel:
         self._generate_processes()
         self._generate_system()
 
-    def _generate_layers(self, bias=0, gain=1):
+    def _generate_layers(self, bias=None, gain=1):
+        if bias is None:
+            bias = -1 * self.bias
+
         self.task_layer = pnl.TransferMechanism(size=self.num_tasks,
                                                 name='task_input')
         self.hidden_layer = pnl.TransferMechanism(size=self.hidden_layer_size,
@@ -88,25 +90,25 @@ class SingleLayerMultitaskingModel:
             self.task_hidden_weights = self.loaded_weights[TASK_HIDDEN_KEY].T
         else:
             self.task_hidden_weights = pnl.random_matrix(self.num_tasks,
-                                                    self.hidden_layer_size, 2, -1) * self.weight_init_scale
+                                                         self.hidden_layer_size, 2, -1) * self.weight_init_scale
 
         if self._should_load(INPUT_HIDDEN_KEY):
             self.input_hidden_weights = self.loaded_weights[INPUT_HIDDEN_KEY].T
         else:
             self.input_hidden_weights = pnl.random_matrix(self.num_features,
-                                                     self.hidden_layer_size, 2, -1) * self.weight_init_scale
+                                                          self.hidden_layer_size, 2, -1) * self.weight_init_scale
 
         if self._should_load(HIDDEN_OUTPUT_KEY):
             self.hidden_output_weights = self.loaded_weights[HIDDEN_OUTPUT_KEY].T
         else:
             self.hidden_output_weights = pnl.random_matrix(self.hidden_layer_size,
-                                                      self.num_features, 2, -1) * self.weight_init_scale
+                                                           self.num_features, 2, -1) * self.weight_init_scale
 
         if self._should_load(TASK_OUTPUT_KEY):
             self.task_output_weights = self.loaded_weights[TASK_OUTPUT_KEY].T
         else:
             self.task_output_weights = pnl.random_matrix(self.num_tasks,
-                                                    self.num_features, 2, -1) * self.weight_init_scale
+                                                         self.num_features, 2, -1) * self.weight_init_scale
 
     def _generate_processes(self):
         self.task_hidden_process = pnl.Process(pathway=[self.task_layer,
@@ -229,7 +231,7 @@ class SingleLayerMultitaskingModel:
         }
 
 
-class PyTorchMultitaskingModel(SingleLayerMultitaskingModel):
+class PyTorchSingleLayerMultitaskingModel(SingleLayerMultitaskingModel):
     def __init__(self, num_dimensions, num_features, weight_file=None, learning=pnl.LEARNING, *,
                  hidden_layer_size=DEFAULT_HIDDEN_LAYER_SIZE,
                  learning_rate=DEFAULT_LEARNING_RATE,
@@ -241,20 +243,20 @@ class PyTorchMultitaskingModel(SingleLayerMultitaskingModel):
                  name=DEFAULT_NAME):
 
         self.composition = ParsingAutodiffComposition(param_init_from_pnl=True)
-        super(PyTorchMultitaskingModel, self).__init__(num_dimensions, num_features, weight_file,
-                                                       learning,
-                                                       hidden_layer_size=hidden_layer_size,
-                                                       learning_rate=learning_rate,
-                                                       bias=bias,
-                                                       weight_init_scale=weight_init_scale,
-                                                       decay=decay,
-                                                       hidden_path_size=hidden_path_size,
-                                                       output_path_size=output_path_size,
-                                                       name=name)
+        super(PyTorchSingleLayerMultitaskingModel, self).__init__(num_dimensions, num_features, weight_file,
+                                                                  learning,
+                                                                  hidden_layer_size=hidden_layer_size,
+                                                                  learning_rate=learning_rate,
+                                                                  bias=bias,
+                                                                  weight_init_scale=weight_init_scale,
+                                                                  decay=decay,
+                                                                  hidden_path_size=hidden_path_size,
+                                                                  output_path_size=output_path_size,
+                                                                  name=name)
 
     def _generate_layers(self, bias=0, gain=1):
-        # PNL subtracts bias rather than adding it, so we multiply by -1
-        super(PyTorchMultitaskingModel, self)._generate_layers(bias=-1 * self.bias)
+        # PNL subtracts bias rather than adding it, so we multiply by -1 -- moved to the super class now
+        super(PyTorchSingleLayerMultitaskingModel, self)._generate_layers()
 
         # No bias layers for now
         for layer in (self.input_layer, self.hidden_layer, self.task_layer, self.output_layer):
@@ -295,7 +297,8 @@ class PyTorchMultitaskingModel(SingleLayerMultitaskingModel):
 
         if self.learning:
             last_outputs = self.composition.run(inputs=input_dict, targets=target_dict, epochs=iterations,
-                                                randomize=randomize, learning_rate=self.learning_rate)
+                                                randomize=randomize, learning_rate=self.learning_rate,
+                                                optimizer='sgd')
         else:
             last_outputs = self.composition.run(inputs=input_dict)
 

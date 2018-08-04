@@ -5,6 +5,7 @@ import single_layer_multitasking_model
 from pattern_generation import generate_training_patterns
 from scipy import io
 import os
+import time
 
 
 # Setting up defaults
@@ -27,14 +28,18 @@ def main():
     #                                              WEIGHT_FILE)
     # model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL, show_processes=pnl.ALL)
 
+    model = multitasking_model.PyTorchMultitaskingModel(DEFAULT_NUM_DIMENSIONS,
+                                                        DEFAULT_NUM_FEATURES_PER_DIMENSION,
+                                                        WEIGHT_FILE)
+
     # model = single_layer_multitasking_model.SingleLayerMultitaskingModel(DEFAULT_NUM_DIMENSIONS,
     #                                                                      DEFAULT_NUM_FEATURES_PER_DIMENSION,
     #                                                                      WEIGHT_FILE)
     # model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL, show_processes=pnl.ALL)
 
-    model = single_layer_multitasking_model.PyTorchMultitaskingModel(DEFAULT_NUM_DIMENSIONS,
-                                                                     DEFAULT_NUM_FEATURES_PER_DIMENSION,
-                                                                     WEIGHT_FILE)
+    # model = single_layer_multitasking_model.PyTorchSingleLayerMultitaskingModel(DEFAULT_NUM_DIMENSIONS,
+    #                                                                  DEFAULT_NUM_FEATURES_PER_DIMENSION,
+    #                                                                  WEIGHT_FILE)
 
     # print(model.train([[[1, 0, 0, 0]], [[0, 1, 0, 0]], [[0, 0, 1, 0]]],
     #           [[1, 0, 0, 0, 0, 0, 0, 0, 0]],
@@ -52,12 +57,13 @@ def main():
     task_indices = np.argmax(task_patterns, 1)
     trial_indices = np.isin(task_indices, DEFUALT_TASK_IDS)
 
+    start = time.time()
     outputs = model.train(
         input_patterns[trial_indices], task_patterns[trial_indices], target_patterns[trial_indices], 500, False)
+    end = time.time()
+    print('500 iterations took {t}'.format(t=end - start))
 
-    print(outputs)
-
-    io.savemat(os.path.join(FOLDER, 'single-layer-pytorch-matlab-patterns-no-shuffle.mat'), outputs)
+    io.savemat(os.path.join(FOLDER, 'pytorch-matlab-patterns-no-shuffle.mat'), outputs)
 
 
 if __name__ == '__main__':
