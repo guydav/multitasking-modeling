@@ -95,7 +95,7 @@ class SingleLayerMultitaskingModel:
         if self._should_load(INPUT_HIDDEN_KEY):
             self.input_hidden_weights = self.loaded_weights[INPUT_HIDDEN_KEY].T
         else:
-            self.input_hidden_weights = pnl.random_matrix(self.num_features,
+            self.input_hidden_weights = pnl.random_matrix(self.num_features * self.num_dimensions,
                                                           self.hidden_layer_size, 2, -1) * self.weight_init_scale
 
         if self._should_load(HIDDEN_OUTPUT_KEY):
@@ -108,7 +108,7 @@ class SingleLayerMultitaskingModel:
             self.task_output_weights = self.loaded_weights[TASK_OUTPUT_KEY].T
         else:
             self.task_output_weights = pnl.random_matrix(self.num_tasks,
-                                                         self.num_features, 2, -1) * self.weight_init_scale
+                                                         self.num_features * self.num_dimensions, 2, -1) * self.weight_init_scale
 
     def _generate_processes(self):
         self.task_hidden_process = pnl.Process(pathway=[self.task_layer,
