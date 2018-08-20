@@ -1,10 +1,6 @@
 import numpy as np
-import psyneulink as pnl
-import multitasking_model
-import single_layer_multitasking_model
-from pattern_generation import generate_training_patterns
+from multitasking import single_layer_multitasking_model
 from scipy import io
-import os
 import time
 
 
@@ -24,8 +20,8 @@ FOLDER = r'/Users/guydavidson/projects/nivlab/multitasking-modeling/multitasking
 
 def main():
     model = single_layer_multitasking_model.PyTorchSingleLayerMultitaskingModel(DEFAULT_NUM_DIMENSIONS,
-                                                                     DEFAULT_NUM_FEATURES_PER_DIMENSION,
-                                                                     WEIGHT_FILE)
+                                                                                DEFAULT_NUM_FEATURES_PER_DIMENSION,
+                                                                                WEIGHT_FILE)
     # model = single_layer_multitasking_model.SingleLayerMultitaskingModel(DEFAULT_NUM_DIMENSIONS,
     #                                                                      DEFAULT_NUM_FEATURES_PER_DIMENSION,
     #                                                                      WEIGHT_FILE)

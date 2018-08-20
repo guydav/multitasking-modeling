@@ -1,10 +1,5 @@
 import numpy as np
-import psyneulink as pnl
-import multitasking_model
-import single_layer_multitasking_model
-from pattern_generation import generate_training_patterns
 from scipy import io
-import os
 import time
 
 

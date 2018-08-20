@@ -1,5 +1,4 @@
 import numpy as np
-import psyneulink as pnl
 import shape_naming_model
 from pattern_generation import generate_training_patterns
 import os
