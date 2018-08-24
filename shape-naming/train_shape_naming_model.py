@@ -1,7 +1,8 @@
 import numpy as np
 import shape_naming_model
-from pattern_generation import generate_training_patterns
+import psyneulink as pnl
 import os
+
 
 # Setting up defaults
 DEFAULT_TRAIN_ITERATIONS = 500
@@ -14,6 +15,8 @@ FOLDER = r'/Users/guydavidson/projects/nivlab/multitasking-modeling/shape-naming
 
 def main():
     model = shape_naming_model.ShapeNamingModel(DEFAULT_NUM_FEATURES) #, indirect_path=False)
+    model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL, show_processes=pnl.ALL)
+    print(model.system.scheduler_processing.consideration_queue)
     out = model.train()
     print(out)
 

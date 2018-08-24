@@ -1,10 +1,8 @@
 import numpy as np
 from numpy import random
 import psyneulink as pnl
-from sklearn.metrics import mean_squared_error
+from collections import defaultdict
 from scipy import io
-import time
-
 
 
 # Setting up default network parameters
@@ -19,7 +17,7 @@ DEFAULT_NOISE_STD = 0.05
 
 DEFAULT_INDIRECT_LAYER_SIZE = 2
 DEFAULT_INDIRECT_LEARNING_RATE = 0.5
-DEFAULT_FAST_BIAS = 0
+DEFAULT_INDIRECT_BIAS = 0
 
 DEFAULT_ACCUMULATOR_RATE = 0.1
 DEFAULT_ACCUMULATOR_NOISE_STD = 0.1
@@ -84,7 +82,7 @@ class ShapeNamingModel:
                  integration_rate=DEFAULT_INTEGRATION_RATE, integrator_mode=DEFAULT_INTEGRATOR_MODE,
                  noise_std=DEFAULT_NOISE_STD, direct_learning_rate=DEFAULT_LEARNING_RATE,
                  indirect_layer_size=DEFAULT_INDIRECT_LAYER_SIZE, indirect_learning_rate=DEFAULT_INDIRECT_LEARNING_RATE,
-                 fast_bias=DEFAULT_FAST_BIAS, accumulator_rate=DEFAULT_ACCUMULATOR_RATE,
+                 indirect_bias=DEFAULT_INDIRECT_BIAS, accumulator_rate=DEFAULT_ACCUMULATOR_RATE,
                  accumulator_noise_std=DEFAULT_ACCUMULATOR_NOISE_STD,
                  accumulator_threshold=DEFAULT_ACCUMULATOR_THRESHOLD, weight_init_scale=DEFAULT_WEIGHT_INIT_SCALE,
                  name=DEFAULT_NAME):
@@ -121,7 +119,7 @@ class ShapeNamingModel:
 
         self.indirect_layer_size = indirect_layer_size
         self.indirect_learning_rate = indirect_learning_rate
-        self.fast_bias = fast_bias
+        self.indirect_bias = indirect_bias
 
         self.accumulator_rate = accumulator_rate
         self.accumulator_noise_std = accumulator_noise_std
@@ -163,14 +161,16 @@ class ShapeNamingModel:
                                                         integrator_mode=self.integrator_mode,
                                                         integration_rate=self.integration_rate,
                                                         noise=self._generate_noise_function())
+
+        # self.color_dummy = pnl.TransferMechanism(size=self.hidden_layer_size, name='dummy')
+
         if self.indirect_path:
             self.indirect_shape_layer = pnl.TransferMechanism(size=self.indirect_layer_size,
-                                                              name='fast_shape',
-                                                              function=pnl.Logistic(bias=self.fast_bias),
+                                                              name='shape_indirect',
+                                                              function=pnl.Logistic(bias=self.indirect_bias),
                                                               integrator_mode=self.integrator_mode,
                                                               integration_rate=self.integration_rate,
-                                                              noise=self._generate_noise_function()
-                                                              )
+                                                              noise=self._generate_noise_function())
 
         # Output layers
         self.output_layer = pnl.TransferMechanism(size=self.num_features,
@@ -191,8 +191,12 @@ class ShapeNamingModel:
             name='second_response_accumulator')
 
         if self.log_values:
-            for layer in (self.color_hidden_layer, self.shape_hidden_layer,
-                          self.output_layer, self.first_accumulator, self.second_accumulator):
+            log_layers = [self.color_hidden_layer, self.shape_hidden_layer,
+                          self.output_layer, self.first_accumulator, self.second_accumulator]
+            if self.indirect_path:
+                log_layers.append(self.indirect_shape_layer)
+
+            for layer in log_layers:
                 layer.set_log_conditions('value')
 
     def _generate_noise_function(self):
@@ -272,6 +276,23 @@ class ShapeNamingModel:
                                                            self.hidden_layer_size, self.num_features,
                                                            self.color_hidden_layer, self.output_layer,
                                                            'color-output-proc')
+        # self.color_dummy_process = self._generate_process('', 2, 2, self.color_hidden_layer, self.color_dummy,
+        #                                                  'color-dummy', 0.1)
+        #
+        # self.dummy_output_process = self._generate_process('', 2, 2, self.color_dummy, self.output_layer,
+        #                                                   'color-dummy', 0.1)
+
+        # If this moves below the shape_output_process, everything goes to hell. Why?
+        if self.indirect_path:
+            self.shape_indirect_process = self._generate_process(SHAPE_FAST_KEY,
+                                                                 self.hidden_layer_size, self.indirect_layer_size,
+                                                                 self.shape_hidden_layer, self.indirect_shape_layer,
+                                                                 'shape-indirect-proc', self.indirect_learning_rate)
+
+            self.indirect_output_process = self._generate_process(FAST_OUTPUT_KEY,
+                                                                  self.indirect_layer_size, self.num_features,
+                                                                  self.indirect_shape_layer, self.output_layer,
+                                                                  'indirect-output-proc', self.indirect_learning_rate)
 
         self.shape_output_process = self._generate_process(SHAPE_OUTPUT_KEY,
                                                            self.hidden_layer_size, self.num_features,
@@ -289,17 +310,6 @@ class ShapeNamingModel:
                                                                  'second-accumulator-process')
 
         self.integrating_mechanisms = (self.color_hidden_layer, self.shape_hidden_layer, self.output_layer)
-
-        if self.indirect_path:
-            self.shape_indirect_process = self._generate_process(SHAPE_FAST_KEY,
-                                                                 self.hidden_layer_size, self.indirect_layer_size,
-                                                                 self.shape_hidden_layer, self.indirect_shape_layer,
-                                                                 'shape-indirect-proc', self.indirect_learning_rate)
-
-            self.indirect_output_process = self._generate_process(FAST_OUTPUT_KEY,
-                                                                  self.indirect_layer_size, self.num_features,
-                                                                  self.indirect_shape_layer, self.output_layer,
-                                                                  'indirect-output-proc', self.indirect_learning_rate)
 
     def _generate_system(self):
         """
@@ -520,17 +530,17 @@ class ShapeNamingModel:
                                            self.color_task_layer, self.shape_task_layer)
         # run in one order
         if randomize_phase_order and random.uniform() < 0.5:
-            shape_naming_outputs = test_shape_naming()
-            color_naming_outputs = test_color_naming()
-            shape_naming_first = True
+            shape_naming_results = test_shape_naming()
+            color_naming_results = test_color_naming()
+            run_shape_naming_first = True
 
         # run in the opposite order
         else:
-            color_naming_outputs = test_color_naming()
-            shape_naming_outputs = test_shape_naming()
-            shape_naming_first = False
+            color_naming_results = test_color_naming()
+            shape_naming_results = test_shape_naming()
+            run_shape_naming_first = False
 
-        return shape_naming_outputs, color_naming_outputs, shape_naming_first
+        return shape_naming_results, color_naming_results, run_shape_naming_first
 
     def _test_single_phase(self, primary_test_inputs, secondary_test_inputs, conditions, primary_input_layer,
                            secondary_input_layer, primary_task_layer, secondary_task_layer):
@@ -574,10 +584,37 @@ class ShapeNamingModel:
         def switch():
             self._switch_trial_type()
 
+        # TODO: do I want to do anything with the outputs proper?
         outputs = self.system.run(inputs=input_dict, targets=target_dict, call_after_trial=switch)[-total_num_inputs:]
 
-        # TODO: record the RTs (# cycles) for each integrator trial (ignoring initialization trials, if they exist)
+        # TODO: if I care about how correct the model was in each case, I can grab the accumulator values similarly to
+        # TODO: how I grab the RT cycles, and compare which accumulator hit condition to the target value
 
-        # TODO: return the per-trial RTs in some fashion, perhaps aggregating here over which task was active and
-        # TODO: which condition it was (conflict/congruent/control), using the shuffled_conditions variable
-        return outputs
+        rt_cycles = self._extract_rt_cycles()
+        results = defaultdict(list)
+        for condition, rt in zip(shuffled_conditions, rt_cycles):
+            results[condition].append(rt)
+
+        return results
+
+    def _extract_rt_cycles(self):
+        # Grab the log dictionary from the output layer
+        log_dict = self.output_layer.log.nparray_dictionary()
+
+        # Extract out the relevant keys from the log to a single numpy array
+        relevant_key_arrays = [np.array([x[0] for x in log_dict[key]]) for key in ('Run', 'Trial', 'Pass')]
+        table = np.stack(relevant_key_arrays, axis=1)
+
+        # Filter out only the last run
+        last_run = np.max(table[:, 0])
+        table = table[table[:, 0] == last_run]
+
+        # Filter out only the last pass of each trial
+        trial_ends = (table[1:, 1] - table[:-1, 1]) != 0
+        trial_ends = np.append(trial_ends, True)
+        last_passes = table[trial_ends, :]
+
+        # Filter out only odd trials
+        last_passes = last_passes[last_passes[:, 1] % 2 == 1, :]
+        return last_passes[:, 2]
+
