@@ -13,21 +13,12 @@ FOLDER = r'/Users/guydavidson/projects/nivlab/multitasking-modeling/shape-naming
 
 
 def main():
-    input_patterns, task_patterns, in_out_map, target_patterns = \
-        generate_training_patterns(NUM_INPUT_DIMENSIONS, DEFAULT_NUM_FEATURES, NUM_OUTPUT_DIMENSIONS)
+    model = shape_naming_model.ShapeNamingModel(DEFAULT_NUM_FEATURES) #, indirect_path=False)
+    out = model.train()
+    print(out)
 
-    for learning_rate in np.arange(0.1, 0.8, 0.1):
-        print('Training model with a learning rate of {lr}...'.format(lr=learning_rate))
-        model = shape_naming_model.ShapeNamingModel(DEFAULT_NUM_FEATURES, fast_path=False, hidden_layer_size=2,
-                                                    learning_rate=learning_rate, bias=-1)
-
-        # model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL,
-        #                         show_processes=pnl.ALL)
-
-        output_log = model.train(
-            input_patterns, task_patterns, target_patterns, 500,
-            False, os.path.join(FOLDER, 'shape-naming-no-fast-adj-bias-2-hidden-units-lr-{lr}.mat'.format(lr=learning_rate)),
-            report_interval=5, repeats=10)
+    test_out = model.test()
+    print(test_out)
 
 
 if __name__ == '__main__':
