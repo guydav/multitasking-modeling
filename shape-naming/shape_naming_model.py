@@ -396,7 +396,7 @@ class ShapeNamingModel:
         secondary_inputs = np.copy(primary_inputs)
         return primary_inputs, secondary_inputs
 
-    def _create_conflict_stimuli(self, num_inputs_per_stimulus):
+    def _create_conflict_inputs(self, num_inputs_per_stimulus):
         """
         In the conflict condition, the primary input is again set to a single feature at a time, and the secondary
         input is set to one of the other (incongruent) features
@@ -412,7 +412,7 @@ class ShapeNamingModel:
 
             secondary_feature_inputs = np.zeros((num_inputs_per_stimulus, self.num_features))
             conflict_feature_indices = np.arange(self.num_features)
-            np.delete(conflict_feature_indices, primary_feature_index)
+            conflict_feature_indices = np.delete(conflict_feature_indices, primary_feature_index)
             num_conflict_features = self.num_features - 1
 
             for i in range(num_conflict_features):
@@ -510,8 +510,8 @@ class ShapeNamingModel:
         # TODO: verify the exact numbers here
         inputs_per_condition = trials_per_stimulus_per_test_block // 3
         control_primary, control_secondary = self._create_control_inputs(inputs_per_condition)
-        congruent_primary, congruent_secondary = self._create_conflict_stimuli(inputs_per_condition)
-        conflict_primary, conflict_secondary = self._create_conflict_stimuli(inputs_per_condition)
+        congruent_primary, congruent_secondary = self._create_conflict_inputs(inputs_per_condition)
+        conflict_primary, conflict_secondary = self._create_conflict_inputs(inputs_per_condition)
 
         primary_test_inputs = np.concatenate((control_primary, congruent_primary, conflict_primary))
         secondary_test_inputs = np.concatenate((control_secondary, congruent_secondary, conflict_secondary))

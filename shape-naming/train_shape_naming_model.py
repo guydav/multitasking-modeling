@@ -15,13 +15,14 @@ FOLDER = r'/Users/guydavidson/projects/nivlab/multitasking-modeling/shape-naming
 
 def main():
     model = shape_naming_model.ShapeNamingModel(DEFAULT_NUM_FEATURES) #, indirect_path=False)
-    model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL, show_processes=pnl.ALL)
-    print(model.system.scheduler_processing.consideration_queue)
-    out = model.train()
-    print(out)
-
-    test_out = model.test()
-    print(test_out)
+    model._create_conflict_inputs(2)
+    # model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL, show_processes=pnl.ALL)
+    # print(model.system.scheduler_processing.consideration_queue)
+    # out = model.train()
+    # print(out)
+    #
+    # test_out = model.test()
+    # print(test_out)
 
 
 if __name__ == '__main__':
