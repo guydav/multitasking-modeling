@@ -3,6 +3,7 @@ from numpy import random
 import psyneulink as pnl
 from collections import defaultdict
 from scipy import io
+import pandas
 
 
 # Setting up default network parameters
@@ -38,8 +39,8 @@ SHAPE_TASK_HIDDEN_KEY = 'weightsTaskShapeHidden'
 COLOR_OUTPUT_KEY = 'weightsColorOutput'
 SHAPE_OUTPUT_KEY = 'weightsShapeOutput'
 
-SHAPE_FAST_KEY = 'weightsShapeFast'
-FAST_OUTPUT_KEY = 'weightsFastOutput'
+SHAPE_INDIRECT_KEY = 'weightsShapeIndirect'
+INDIRECT_OUTPUT_KEY = 'weightsIndirectOutput'
 
 FIRST_ACCUMULATOR_DIFFERENCING_KEY = 'firstAccumulatorDifferencing'
 SECOND_ACCUMULATOR_DIFFERENCING_KEY = 'secondAccumulatorDifferencing'
@@ -77,20 +78,21 @@ CONFLICT_CONDITION = 'conflict'
 
 class ShapeNamingModel:
     def __init__(self, num_features, indirect_path=True, weight_file=None, weight_dict=DEFAULT_WEIGHT_DICT,
-                 learning=pnl.LEARNING, log_values=True, *, hidden_layer_size=DEFAULT_HIDDEN_LAYER_SIZE,
-                 hidden_bias=DEFAULT_HIDDEN_BIAS, hidden_gain=DEFAULT_HIDDEN_GAIN,
-                 integration_rate=DEFAULT_INTEGRATION_RATE, integrator_mode=DEFAULT_INTEGRATOR_MODE,
-                 noise_std=DEFAULT_NOISE_STD, direct_learning_rate=DEFAULT_LEARNING_RATE,
-                 indirect_layer_size=DEFAULT_INDIRECT_LAYER_SIZE, indirect_learning_rate=DEFAULT_INDIRECT_LEARNING_RATE,
-                 indirect_bias=DEFAULT_INDIRECT_BIAS, accumulator_rate=DEFAULT_ACCUMULATOR_RATE,
-                 accumulator_noise_std=DEFAULT_ACCUMULATOR_NOISE_STD,
+                 # learning=pnl.LEARNING,
+                 log_values=True, *,
+                 hidden_layer_size=DEFAULT_HIDDEN_LAYER_SIZE, hidden_bias=DEFAULT_HIDDEN_BIAS,
+                 hidden_gain=DEFAULT_HIDDEN_GAIN, integration_rate=DEFAULT_INTEGRATION_RATE,
+                 integrator_mode=DEFAULT_INTEGRATOR_MODE, noise_std=DEFAULT_NOISE_STD,
+                 direct_learning_rate=DEFAULT_LEARNING_RATE, indirect_layer_size=DEFAULT_INDIRECT_LAYER_SIZE,
+                 indirect_learning_rate=DEFAULT_INDIRECT_LEARNING_RATE, indirect_bias=DEFAULT_INDIRECT_BIAS,
+                 accumulator_rate=DEFAULT_ACCUMULATOR_RATE, accumulator_noise_std=DEFAULT_ACCUMULATOR_NOISE_STD,
                  accumulator_threshold=DEFAULT_ACCUMULATOR_THRESHOLD, weight_init_scale=DEFAULT_WEIGHT_INIT_SCALE,
                  name=DEFAULT_NAME):
 
         self.num_features = num_features
         self.indirect_path = indirect_path
         # TODO: verify if I even need this parameter anymore?
-        self.learning = learning
+        # self.learning = learning
         self.log_values = log_values
 
         if weight_file is not None and weight_dict is not None:
@@ -165,12 +167,7 @@ class ShapeNamingModel:
         # self.color_dummy = pnl.TransferMechanism(size=self.hidden_layer_size, name='dummy')
 
         if self.indirect_path:
-            self.indirect_shape_layer = pnl.TransferMechanism(size=self.indirect_layer_size,
-                                                              name='shape_indirect',
-                                                              function=pnl.Logistic(bias=self.indirect_bias),
-                                                              integrator_mode=self.integrator_mode,
-                                                              integration_rate=self.integration_rate,
-                                                              noise=self._generate_noise_function())
+            self._generate_indirect_layer()
 
         # Output layers
         self.output_layer = pnl.TransferMechanism(size=self.num_features,
@@ -191,13 +188,22 @@ class ShapeNamingModel:
             name='second_response_accumulator')
 
         if self.log_values:
-            log_layers = [self.color_hidden_layer, self.shape_hidden_layer,
-                          self.output_layer, self.first_accumulator, self.second_accumulator]
+            self.log_layers = [self.color_hidden_layer, self.shape_hidden_layer,
+                               self.output_layer, self.first_accumulator, self.second_accumulator]
             if self.indirect_path:
-                log_layers.append(self.indirect_shape_layer)
+                # Inserting there for it to appear in the correct order in output dataframe
+                self.log_layers.insert(2, self.indirect_shape_layer)
 
-            for layer in log_layers:
+            for layer in self.log_layers:
                 layer.set_log_conditions('value')
+
+    def _generate_indirect_layer(self):
+        self.indirect_shape_layer = pnl.TransferMechanism(size=self.indirect_layer_size,
+                                                          name='shape_indirect',
+                                                          function=pnl.Logistic(bias=self.indirect_bias),
+                                                          integrator_mode=self.integrator_mode,
+                                                          integration_rate=self.integration_rate,
+                                                          noise=self._generate_noise_function())
 
     def _generate_noise_function(self):
         """
@@ -276,20 +282,15 @@ class ShapeNamingModel:
                                                            self.hidden_layer_size, self.num_features,
                                                            self.color_hidden_layer, self.output_layer,
                                                            'color-output-proc')
-        # self.color_dummy_process = self._generate_process('', 2, 2, self.color_hidden_layer, self.color_dummy,
-        #                                                  'color-dummy', 0.1)
-        #
-        # self.dummy_output_process = self._generate_process('', 2, 2, self.color_dummy, self.output_layer,
-        #                                                   'color-dummy', 0.1)
 
         # If this moves below the shape_output_process, everything goes to hell. Why?
         if self.indirect_path:
-            self.shape_indirect_process = self._generate_process(SHAPE_FAST_KEY,
+            self.shape_indirect_process = self._generate_process(SHAPE_INDIRECT_KEY,
                                                                  self.hidden_layer_size, self.indirect_layer_size,
                                                                  self.shape_hidden_layer, self.indirect_shape_layer,
                                                                  'shape-indirect-proc', self.indirect_learning_rate)
 
-            self.indirect_output_process = self._generate_process(FAST_OUTPUT_KEY,
+            self.indirect_output_process = self._generate_process(INDIRECT_OUTPUT_KEY,
                                                                   self.indirect_layer_size, self.num_features,
                                                                   self.indirect_shape_layer, self.output_layer,
                                                                   'indirect-output-proc', self.indirect_learning_rate)
@@ -309,7 +310,9 @@ class ShapeNamingModel:
                                                                  self.output_layer, self.second_accumulator,
                                                                  'second-accumulator-process')
 
-        self.integrating_mechanisms = (self.color_hidden_layer, self.shape_hidden_layer, self.output_layer)
+        self.integrating_mechanisms = [self.color_hidden_layer, self.shape_hidden_layer, self.output_layer]
+        if self.indirect_path:
+            self.integrating_mechanisms.append(self.indirect_shape_layer)
 
     def _generate_system(self):
         """
@@ -332,7 +335,6 @@ class ShapeNamingModel:
 
     def _switch_to_integration_trial(self):
         def pass_threshold(first_mechanism, second_mechanism, threshold):
-            # TODO: verify these are indeed numpy arrays
             if np.any(first_mechanism.output_states[0].value >= threshold) or \
                     np.any(second_mechanism.output_states[0].value >= threshold):
                 return True
@@ -467,7 +469,6 @@ class ShapeNamingModel:
         total_trials_per_block = trials_per_stimulus_per_train_block * self.num_features
 
         # Create all inputs and targets
-        # TODO: do I need the second explicit dimension here?
         shape_task_inputs = np.ones((total_trials_per_block,))
         color_task_inputs = np.zeros((total_trials_per_block,))
 
@@ -497,10 +498,10 @@ class ShapeNamingModel:
         # Set in default mode - no integration, no noise, termination is pnl.AllHaveRun()
         self._switch_trial_settings(learning=True)
 
-        # TODO: verify learning runs, and that it only runs on the correct mechanisms
         return self.system.run(inputs=input_dict, targets=target_dict)[-total_trials_per_block:]
 
-    def test(self, trials_per_stimulus_per_test_block=DEFAULT_NUM_TRIALS_PER_STIMULUS, randomize_phase_order=True):
+    def test(self, trials_per_stimulus_per_test_block=DEFAULT_NUM_TRIALS_PER_STIMULUS, randomize_phase_order=True,
+             control_condition=True, congruent_condition=True, conflict_condition=True):
         """
         See the long comment in the train method. This implements a single testing block, for both types of task.
         :param trials_per_stimulus_per_test_block:
@@ -508,26 +509,41 @@ class ShapeNamingModel:
         :return:
         """
         # TODO: verify the exact numbers here
-        inputs_per_condition = trials_per_stimulus_per_test_block // 3
-        control_primary, control_secondary = self._create_control_inputs(inputs_per_condition)
-        congruent_primary, congruent_secondary = self._create_conflict_inputs(inputs_per_condition)
-        conflict_primary, conflict_secondary = self._create_conflict_inputs(inputs_per_condition)
+        num_conditions = int(control_condition) + int(congruent_condition) + int(conflict_condition)
+        inputs_per_condition = trials_per_stimulus_per_test_block // num_conditions
 
-        primary_test_inputs = np.concatenate((control_primary, congruent_primary, conflict_primary))
-        secondary_test_inputs = np.concatenate((control_secondary, congruent_secondary, conflict_secondary))
-        conditions = [CONTROL_CONDITION] * inputs_per_condition * self.num_features + \
-                     [CONGRUENT_CONDITION] * inputs_per_condition * self.num_features + \
-                     [CONFLICT_CONDITION] * inputs_per_condition * self.num_features
+        primary_inputs = []
+        secondary_inputs = []
+        conditions = []
+
+        for condition_flag, create_func, condition_name in zip(
+                (control_condition, congruent_condition, conflict_condition),
+                (self._create_control_inputs, self._create_congruent_inputs, self._create_conflict_inputs),
+                (CONTROL_CONDITION, CONGRUENT_CONDITION, CONFLICT_CONDITION)):
+
+            if condition_flag:
+                primary, secondary = create_func(inputs_per_condition)
+                primary_inputs.append(primary)
+                secondary_inputs.append(secondary)
+                conditions.extend([condition_name] * inputs_per_condition * self.num_features)
+
+        primary_test_inputs = np.concatenate(primary_inputs)
+        secondary_test_inputs = np.concatenate(secondary_inputs)
 
         def test_shape_naming():
-            return self._test_single_phase(primary_test_inputs, secondary_test_inputs, conditions,
-                                           self.shape_input_layer, self.color_input_layer,
-                                           self.shape_task_layer, self.color_task_layer)
+            results = self._test_single_phase(primary_test_inputs, secondary_test_inputs, conditions,
+                                              self.shape_input_layer, self.color_input_layer,
+                                              self.shape_task_layer, self.color_task_layer)
+            self.last_shape_naming_df = self.last_run_to_dataframe()
+            return results
 
         def test_color_naming():
-            return self._test_single_phase(primary_test_inputs, secondary_test_inputs, conditions,
-                                           self.color_input_layer, self.shape_input_layer,
-                                           self.color_task_layer, self.shape_task_layer)
+            results = self._test_single_phase(primary_test_inputs, secondary_test_inputs, conditions,
+                                              self.color_input_layer, self.shape_input_layer,
+                                              self.color_task_layer, self.shape_task_layer)
+            self.last_color_naming_df = self.last_run_to_dataframe()
+            return results
+
         # run in one order
         if randomize_phase_order and random.uniform() < 0.5:
             shape_naming_results = test_shape_naming()
@@ -618,3 +634,66 @@ class ShapeNamingModel:
         last_passes = last_passes[last_passes[:, 1] % 2 == 1, :]
         return last_passes[:, 2]
 
+    def last_run_to_dataframe(self):
+        dataframes = []
+        first = True
+        for log_layer in self.log_layers:
+            layer_size = log_layer.size[0]
+            log_dict = log_layer.log.nparray_dictionary()
+
+            # Extract out all keys, treating value specially since it's already an np array
+            arrays = [np.array([x[0] for x in log_dict[key]]) for key in ('Run', 'Trial', 'Pass', 'Time_step')]
+            arrays.extend([np.squeeze(log_dict['value'][:, :, i]) for i in range(layer_size)])
+            table = np.stack(arrays, axis=1)
+
+            # Filter out only the last run
+            last_run = np.max(table[:, 0])
+            table = table[table[:, 0] == last_run]
+
+            # Create as dataframe and add to the list of dataframes
+            if first:
+                df = pandas.DataFrame(table, columns=['Run', 'Trial', 'Pass', 'Time_step'] +
+                                                     [f'{log_layer.name}_{i}' for i in range(layer_size)])
+                first = False
+
+            else:
+                df = pandas.DataFrame(table[:, -1 * layer_size:], columns=[f'{log_layer.name}_{i}'
+                                                                           for i in range(layer_size)])
+
+            dataframes.append(df)
+
+        return pandas.concat(dataframes, axis=1, join='inner')
+
+
+class HebbianShapeNamingModel(ShapeNamingModel):
+    def __init__(self, num_features, indirect_path=True, weight_file=None, weight_dict=DEFAULT_WEIGHT_DICT,
+                 log_values=True, *,
+                 hidden_layer_size=DEFAULT_HIDDEN_LAYER_SIZE, hidden_bias=DEFAULT_HIDDEN_BIAS,
+                 hidden_gain=DEFAULT_HIDDEN_GAIN, integration_rate=DEFAULT_INTEGRATION_RATE,
+                 integrator_mode=DEFAULT_INTEGRATOR_MODE, noise_std=DEFAULT_NOISE_STD,
+                 direct_learning_rate=DEFAULT_LEARNING_RATE, indirect_layer_size=DEFAULT_INDIRECT_LAYER_SIZE,
+                 indirect_learning_rate=DEFAULT_INDIRECT_LEARNING_RATE, indirect_bias=DEFAULT_INDIRECT_BIAS,
+                 accumulator_rate=DEFAULT_ACCUMULATOR_RATE, accumulator_noise_std=DEFAULT_ACCUMULATOR_NOISE_STD,
+                 accumulator_threshold=DEFAULT_ACCUMULATOR_THRESHOLD, weight_init_scale=DEFAULT_WEIGHT_INIT_SCALE,
+                 name=DEFAULT_NAME):
+
+        super(HebbianShapeNamingModel, self).__init__(
+            num_features, indirect_path, weight_file, weight_dict, log_values, hidden_layer_size=hidden_layer_size,
+            hidden_bias=hidden_bias, hidden_gain=hidden_gain, integration_rate=integration_rate,
+            integrator_mode=integrator_mode, noise_std=noise_std, direct_learning_rate=direct_learning_rate,
+            indirect_layer_size=indirect_layer_size, indirect_learning_rate=indirect_learning_rate,
+            indirect_bias=indirect_bias, accumulator_rate=accumulator_rate, accumulator_noise_std=accumulator_noise_std,
+            accumulator_threshold=accumulator_threshold, weight_init_scale=weight_init_scale, name=name)
+
+    def _generate_indirect_layer(self):
+        self.indirect_shape_layer = pnl.TransferMechanism(size=self.indirect_layer_size,
+                                                          name='shape_indirect',
+                                                          function=pnl.Logistic(bias=self.indirect_bias),
+                                                          integrator_mode=self.integrator_mode,
+                                                          integration_rate=self.integration_rate,
+                                                          noise=self._generate_noise_function())
+        self.indirect_shape_layer = pnl.ContrastiveHebbianMechanism(
+            input_size=self.num_features, hidden_size=self.indirect_layer_size, target_size=self.num_features,
+            integrator_mode=self.integrator_mode, integration_rate=self.integration_rate,
+            noise=self._generate_noise_function()
+        )
