@@ -8,20 +8,21 @@ import pandas
 
 # Setting up default network parameters
 #  TODO: find the correct values for all of these
+DEFAULT_NUM_FEATURES = 2
 DEFAULT_HIDDEN_LAYER_SIZE = 2
-DEFAULT_LEARNING_RATE = 0.1
+DEFAULT_LEARNING_RATE = 0.02
 DEFAULT_HIDDEN_BIAS = 4  # PNL bias is subtracted, so this mean a bias of -4
 DEFAULT_HIDDEN_GAIN = 1
 DEFAULT_INTEGRATION_RATE = 0.1
 DEFAULT_INTEGRATOR_MODE = True
-DEFAULT_NOISE_STD = 0.05
+DEFAULT_NOISE_STD = 0.01
 
 DEFAULT_INDIRECT_LAYER_SIZE = 2
-DEFAULT_INDIRECT_LEARNING_RATE = 0.5
-DEFAULT_INDIRECT_BIAS = 0
+DEFAULT_INDIRECT_LEARNING_RATE = 0.2
+DEFAULT_INDIRECT_BIAS = 2
 
-DEFAULT_ACCUMULATOR_RATE = 0.1
-DEFAULT_ACCUMULATOR_NOISE_STD = 0.1
+DEFAULT_ACCUMULATOR_RATE = 0.2
+DEFAULT_ACCUMULATOR_NOISE_STD = 0.01
 DEFAULT_ACCUMULATOR_THRESHOLD = 1.0
 
 DEFAULT_WEIGHT_INIT_SCALE = 2e-2
@@ -77,9 +78,8 @@ CONFLICT_CONDITION = 'conflict'
 
 
 class ShapeNamingModel:
-    def __init__(self, num_features, indirect_path=True, weight_file=None, weight_dict=DEFAULT_WEIGHT_DICT,
-                 # learning=pnl.LEARNING,
-                 log_values=True, *,
+    def __init__(self, num_features=DEFAULT_NUM_FEATURES, indirect_path=True,
+                 weight_file=None, weight_dict=DEFAULT_WEIGHT_DICT, log_values=True, *,
                  hidden_layer_size=DEFAULT_HIDDEN_LAYER_SIZE, hidden_bias=DEFAULT_HIDDEN_BIAS,
                  hidden_gain=DEFAULT_HIDDEN_GAIN, integration_rate=DEFAULT_INTEGRATION_RATE,
                  integrator_mode=DEFAULT_INTEGRATOR_MODE, noise_std=DEFAULT_NOISE_STD,
@@ -205,13 +205,6 @@ class ShapeNamingModel:
                                                           integration_rate=self.integration_rate,
                                                           noise=self._generate_noise_function())
 
-    def _generate_noise_function(self):
-        """
-        Generate the noise function with the supplied `noise_std`, split to a member since this tends to recurr.
-        :return: A PsyNeuLink noise function with a normal noise distribution
-        """
-        return pnl.NormalDist(standard_dev=self.noise_std).function
-
     def _should_load(self, key):
         """
         A utility to help figure out when should use pre-provided weights, instead of generating random ones.
@@ -285,15 +278,7 @@ class ShapeNamingModel:
 
         # If this moves below the shape_output_process, everything goes to hell. Why?
         if self.indirect_path:
-            self.shape_indirect_process = self._generate_process(SHAPE_INDIRECT_KEY,
-                                                                 self.hidden_layer_size, self.indirect_layer_size,
-                                                                 self.shape_hidden_layer, self.indirect_shape_layer,
-                                                                 'shape-indirect-proc', self.indirect_learning_rate)
-
-            self.indirect_output_process = self._generate_process(INDIRECT_OUTPUT_KEY,
-                                                                  self.indirect_layer_size, self.num_features,
-                                                                  self.indirect_shape_layer, self.output_layer,
-                                                                  'indirect-output-proc', self.indirect_learning_rate)
+            self._generate_indirect_processes()
 
         self.shape_output_process = self._generate_process(SHAPE_OUTPUT_KEY,
                                                            self.hidden_layer_size, self.num_features,
@@ -313,6 +298,16 @@ class ShapeNamingModel:
         self.integrating_mechanisms = [self.color_hidden_layer, self.shape_hidden_layer, self.output_layer]
         if self.indirect_path:
             self.integrating_mechanisms.append(self.indirect_shape_layer)
+
+    def _generate_indirect_processes(self):
+        self.shape_indirect_process = self._generate_process(SHAPE_INDIRECT_KEY,
+                                                             self.hidden_layer_size, self.indirect_layer_size,
+                                                             self.shape_hidden_layer, self.indirect_shape_layer,
+                                                             'shape-indirect-proc', self.indirect_learning_rate)
+        self.indirect_output_process = self._generate_process(INDIRECT_OUTPUT_KEY,
+                                                              self.indirect_layer_size, self.num_features,
+                                                              self.indirect_shape_layer, self.output_layer,
+                                                              'indirect-output-proc', self.indirect_learning_rate)
 
     def _generate_system(self):
         """
@@ -467,11 +462,20 @@ class ShapeNamingModel:
         :return:
         """
         total_trials_per_block = trials_per_stimulus_per_train_block * self.num_features
+        input_dict, target_dict = self._create_train_inputs(randomize_order, trials_per_stimulus_per_train_block)
+
+        # Set in default mode - no integration, no noise, termination is pnl.AllHaveRun()
+        self._switch_trial_settings(learning=True)
+
+        return self.system.run(inputs=input_dict, targets=target_dict)[-total_trials_per_block:]
+
+    def _create_train_inputs(self, randomize_order, trials_per_stimulus_per_train_block):
+
+        total_trials_per_block = trials_per_stimulus_per_train_block * self.num_features
 
         # Create all inputs and targets
         shape_task_inputs = np.ones((total_trials_per_block,))
         color_task_inputs = np.zeros((total_trials_per_block,))
-
         shape_inputs, color_inputs = self._create_control_inputs(trials_per_stimulus_per_train_block)
         targets = np.copy(shape_inputs)
 
@@ -485,20 +489,17 @@ class ShapeNamingModel:
         targets = targets[perm]
 
         # Create I/O dictionaries
-        # TODO: add the target here as a separate input to the CHL when working with it
         input_dict = {
             self.color_task_layer: color_task_inputs,
             self.shape_task_layer: shape_task_inputs,
             self.color_input_layer: color_inputs,
             self.shape_input_layer: shape_inputs
         }
+
         # TODO: do I compare to the accumulator values? Or the output layer?
         target_dict = {self.output_layer: targets}
 
-        # Set in default mode - no integration, no noise, termination is pnl.AllHaveRun()
-        self._switch_trial_settings(learning=True)
-
-        return self.system.run(inputs=input_dict, targets=target_dict)[-total_trials_per_block:]
+        return input_dict, target_dict
 
     def test(self, trials_per_stimulus_per_test_block=DEFAULT_NUM_TRIALS_PER_STIMULUS, randomize_phase_order=True,
              control_condition=True, congruent_condition=True, conflict_condition=True):
@@ -563,6 +564,35 @@ class ShapeNamingModel:
 
         # Create a copy of the inputs, randomly permute the order
         total_num_inputs = primary_test_inputs.shape[0]
+        input_dict, target_dict, shuffled_conditions = self._create_test_inputs(conditions, primary_input_layer,
+                                                                                primary_task_layer, primary_test_inputs,
+                                                                                secondary_input_layer,
+                                                                                secondary_task_layer,
+                                                                                secondary_test_inputs)
+
+        # start off in the initialization trial mode
+        self._switch_trial_settings()
+
+        def switch():
+            self._switch_trial_type()
+
+        # TODO: do I want to do anything with the outputs proper?
+        outputs = self.system.run(inputs=input_dict, targets=target_dict, call_after_trial=switch)[-total_num_inputs:]
+
+        # TODO: if I care about how correct the model was in each case, I can grab the accumulator values similarly to
+        # TODO: how I grab the RT cycles, and compare which accumulator hit condition to the target value
+
+        rt_cycles = self._extract_rt_cycles()
+        results = defaultdict(list)
+        for condition, rt in zip(shuffled_conditions, rt_cycles):
+            results[condition].append(rt)
+
+        return results
+
+    def _create_test_inputs(self, conditions, primary_input_layer, primary_task_layer, primary_test_inputs,
+                            secondary_input_layer, secondary_task_layer, secondary_test_inputs):
+
+        total_num_inputs = primary_test_inputs.shape[0]
         perm = np.random.permutation(total_num_inputs)
 
         shuffled_primary_inputs = np.copy(primary_test_inputs)[perm]
@@ -583,7 +613,6 @@ class ShapeNamingModel:
         targets = np.copy(shuffled_primary_inputs)
 
         # Create I/O dictionaries
-        # TODO: add the target here as a separate input to the CHL when working with it
         input_dict = {
             primary_input_layer: shuffled_primary_inputs,
             secondary_input_layer: shuffled_secondary_inputs,
@@ -594,24 +623,7 @@ class ShapeNamingModel:
         # TODO: do I compare to the accumulator values? Or the output layer?
         target_dict = {self.output_layer: targets}
 
-        # start off in the initialization trial mode
-        self._switch_trial_settings()
-
-        def switch():
-            self._switch_trial_type()
-
-        # TODO: do I want to do anything with the outputs proper?
-        outputs = self.system.run(inputs=input_dict, targets=target_dict, call_after_trial=switch)[-total_num_inputs:]
-
-        # TODO: if I care about how correct the model was in each case, I can grab the accumulator values similarly to
-        # TODO: how I grab the RT cycles, and compare which accumulator hit condition to the target value
-
-        rt_cycles = self._extract_rt_cycles()
-        results = defaultdict(list)
-        for condition, rt in zip(shuffled_conditions, rt_cycles):
-            results[condition].append(rt)
-
-        return results
+        return input_dict, target_dict, shuffled_conditions
 
     def _extract_rt_cycles(self):
         # Grab the log dictionary from the output layer
@@ -666,8 +678,8 @@ class ShapeNamingModel:
 
 
 class HebbianShapeNamingModel(ShapeNamingModel):
-    def __init__(self, num_features, indirect_path=True, weight_file=None, weight_dict=DEFAULT_WEIGHT_DICT,
-                 log_values=True, *,
+    def __init__(self, num_features=DEFAULT_NUM_FEATURES, indirect_path=True,
+                 weight_file=None, weight_dict=DEFAULT_WEIGHT_DICT, log_values=True, *,
                  hidden_layer_size=DEFAULT_HIDDEN_LAYER_SIZE, hidden_bias=DEFAULT_HIDDEN_BIAS,
                  hidden_gain=DEFAULT_HIDDEN_GAIN, integration_rate=DEFAULT_INTEGRATION_RATE,
                  integrator_mode=DEFAULT_INTEGRATOR_MODE, noise_std=DEFAULT_NOISE_STD,
@@ -686,14 +698,53 @@ class HebbianShapeNamingModel(ShapeNamingModel):
             accumulator_threshold=accumulator_threshold, weight_init_scale=weight_init_scale, name=name)
 
     def _generate_indirect_layer(self):
-        self.indirect_shape_layer = pnl.TransferMechanism(size=self.indirect_layer_size,
-                                                          name='shape_indirect',
-                                                          function=pnl.Logistic(bias=self.indirect_bias),
-                                                          integrator_mode=self.integrator_mode,
-                                                          integration_rate=self.integration_rate,
-                                                          noise=self._generate_noise_function())
+        # TODO: initial weights - does a hollow matrix make sense?
+        # TODO: why is the parameter here called enable_learning rather than learning?
         self.indirect_shape_layer = pnl.ContrastiveHebbianMechanism(
             input_size=self.num_features, hidden_size=self.indirect_layer_size, target_size=self.num_features,
+            separated=True,
             integrator_mode=self.integrator_mode, integration_rate=self.integration_rate,
-            noise=self._generate_noise_function()
+            noise=self._generate_noise_function(), learning_rate=self.indirect_learning_rate,
+            enable_learning=self.indirect_learning_rate != 0
         )
+
+        self.indirect_target_input = pnl.TransferMechanism(size=self.num_features, name='chl-target-input')
+
+    def _generate_indirect_processes(self):
+        learning = self.indirect_learning_rate != 0
+        self.shape_indirect_process = pnl.Process(
+            pathway=[self.shape_hidden_layer, self.indirect_shape_layer, self.output_layer],
+            name='shape-chl-process')
+        self.processes.append(self.shape_indirect_process)
+
+        if learning:
+            learning_mechanism = self.indirect_shape_layer.learning_mechanism
+            learning_mechanism.learning_rate = self.indirect_learning_rate
+            self.learning_mechanisms_to_learning_rates[learning_mechanism] = self.indirect_learning_rate
+
+        target_to_chl_projection = pnl.MappingProjection(sender=self.indirect_target_input.output_states[0],
+                                                         receiver=self.indirect_shape_layer.input_states[2])
+        self.indirect_target_input_process = pnl.Process(
+            pathway=[self.indirect_target_input, target_to_chl_projection, self.indirect_shape_layer],
+            name='chl-target-process'
+        )
+        self.processes.append(self.indirect_target_input_process)
+
+    def _create_train_inputs(self, randomize_order, trials_per_stimulus_per_train_block):
+        input_dict, target_dict, = \
+            super(HebbianShapeNamingModel, self)._create_train_inputs(randomize_order,
+                                                                      trials_per_stimulus_per_train_block)
+
+        input_dict[self.indirect_target_input] = target_dict[self.output_layer]
+        return input_dict, target_dict
+
+    def _create_test_inputs(self, conditions, primary_input_layer, primary_task_layer, primary_test_inputs,
+                            secondary_input_layer, secondary_task_layer, secondary_test_inputs):
+        input_dict, target_dict, shuffled_conditions = \
+            super(HebbianShapeNamingModel, self)._create_test_inputs(
+                conditions, primary_input_layer, primary_task_layer, primary_test_inputs,
+                secondary_input_layer, secondary_task_layer, secondary_test_inputs)
+
+        input_dict[self.indirect_target_input] = target_dict[self.output_layer]
+        return input_dict, target_dict, shuffled_conditions
+
