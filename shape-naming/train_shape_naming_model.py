@@ -21,9 +21,10 @@ def main():
     # test_out = model.test()
     # print(test_out)
 
-    hebbian_model = shape_naming_model.HebbianShapeNamingModel()
-    # hebbian_model.system.show_graph(show_dimensions=pnl.ALL, show_projection_labels=pnl.ALL,
-    #                                 show_processes=pnl.ALL, show_learning=pnl.ALL)
+    hebbian_model = shape_naming_model.HebbianShapeNamingModel(
+        direct_learning_rate=0.1, noise_std=0.01, integration_rate=0.2, accumulator_noise_std=0.01,
+        indirect_learning_rate=0.1, indirect_bias=2, indirect_layer_size=6)
+
     train_out = hebbian_model.train()
     test_out = hebbian_model.test()
 

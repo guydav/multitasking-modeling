@@ -20,6 +20,7 @@ DEFAULT_NOISE_STD = 0.01
 DEFAULT_INDIRECT_LAYER_SIZE = 2
 DEFAULT_INDIRECT_LEARNING_RATE = 0.2
 DEFAULT_INDIRECT_BIAS = 2
+DEFAULT_INDIRECT_LOG_CONDITIONS = 'value'
 
 DEFAULT_ACCUMULATOR_RATE = 0.2
 DEFAULT_ACCUMULATOR_NOISE_STD = 0.01
@@ -85,6 +86,7 @@ class ShapeNamingModel:
                  integrator_mode=DEFAULT_INTEGRATOR_MODE, noise_std=DEFAULT_NOISE_STD,
                  direct_learning_rate=DEFAULT_LEARNING_RATE, indirect_layer_size=DEFAULT_INDIRECT_LAYER_SIZE,
                  indirect_learning_rate=DEFAULT_INDIRECT_LEARNING_RATE, indirect_bias=DEFAULT_INDIRECT_BIAS,
+                 indirect_log_conditions=DEFAULT_INDIRECT_LOG_CONDITIONS,
                  accumulator_rate=DEFAULT_ACCUMULATOR_RATE, accumulator_noise_std=DEFAULT_ACCUMULATOR_NOISE_STD,
                  accumulator_threshold=DEFAULT_ACCUMULATOR_THRESHOLD, weight_init_scale=DEFAULT_WEIGHT_INIT_SCALE,
                  name=DEFAULT_NAME):
@@ -122,6 +124,7 @@ class ShapeNamingModel:
         self.indirect_layer_size = indirect_layer_size
         self.indirect_learning_rate = indirect_learning_rate
         self.indirect_bias = indirect_bias
+        self.indirect_log_conditions = indirect_log_conditions
 
         self.accumulator_rate = accumulator_rate
         self.accumulator_noise_std = accumulator_noise_std
@@ -190,12 +193,14 @@ class ShapeNamingModel:
         if self.log_values:
             self.log_layers = [self.color_hidden_layer, self.shape_hidden_layer,
                                self.output_layer, self.first_accumulator, self.second_accumulator]
-            if self.indirect_path:
-                # Inserting there for it to appear in the correct order in output dataframe
-                self.log_layers.insert(2, self.indirect_shape_layer)
 
             for layer in self.log_layers:
                 layer.set_log_conditions('value')
+
+            if self.indirect_path:
+                # Inserting there for it to appear in the correct order in output dataframe
+                self.log_layers.insert(2, self.indirect_shape_layer)
+                self.indirect_shape_layer.set_log_conditions(self.indirect_log_conditions)
 
     def _generate_indirect_layer(self):
         self.indirect_shape_layer = pnl.TransferMechanism(size=self.indirect_layer_size,
@@ -321,6 +326,13 @@ class ShapeNamingModel:
             processes=self.processes,
             # learning_rate=self.learning_rate
         )
+
+    def _generate_noise_function(self):
+        """
+        Generate the noise function with the supplied `noise_std`, split to a member since this tends to recurr.
+        :return: A PsyNeuLink noise function with a normal noise distribution
+        """
+        return pnl.NormalDist(standard_dev=self.noise_std).function
 
     def _switch_trial_type(self):
         if isinstance(self.system.termination_processing[pnl.TimeScale.TRIAL], pnl.AllHaveRun):
@@ -677,6 +689,9 @@ class ShapeNamingModel:
         return pandas.concat(dataframes, axis=1, join='inner')
 
 
+HEBBIAN_INDIRECT_LOG_CONDITIONS = ['value', 'matrix', 'max_passes']
+
+
 class HebbianShapeNamingModel(ShapeNamingModel):
     def __init__(self, num_features=DEFAULT_NUM_FEATURES, indirect_path=True,
                  weight_file=None, weight_dict=DEFAULT_WEIGHT_DICT, log_values=True, *,
@@ -685,6 +700,7 @@ class HebbianShapeNamingModel(ShapeNamingModel):
                  integrator_mode=DEFAULT_INTEGRATOR_MODE, noise_std=DEFAULT_NOISE_STD,
                  direct_learning_rate=DEFAULT_LEARNING_RATE, indirect_layer_size=DEFAULT_INDIRECT_LAYER_SIZE,
                  indirect_learning_rate=DEFAULT_INDIRECT_LEARNING_RATE, indirect_bias=DEFAULT_INDIRECT_BIAS,
+                 indirect_log_conditions=HEBBIAN_INDIRECT_LOG_CONDITIONS,
                  accumulator_rate=DEFAULT_ACCUMULATOR_RATE, accumulator_noise_std=DEFAULT_ACCUMULATOR_NOISE_STD,
                  accumulator_threshold=DEFAULT_ACCUMULATOR_THRESHOLD, weight_init_scale=DEFAULT_WEIGHT_INIT_SCALE,
                  name=DEFAULT_NAME):
@@ -694,17 +710,24 @@ class HebbianShapeNamingModel(ShapeNamingModel):
             hidden_bias=hidden_bias, hidden_gain=hidden_gain, integration_rate=integration_rate,
             integrator_mode=integrator_mode, noise_std=noise_std, direct_learning_rate=direct_learning_rate,
             indirect_layer_size=indirect_layer_size, indirect_learning_rate=indirect_learning_rate,
-            indirect_bias=indirect_bias, accumulator_rate=accumulator_rate, accumulator_noise_std=accumulator_noise_std,
+            indirect_bias=indirect_bias, indirect_log_conditions=indirect_log_conditions,
+            accumulator_rate=accumulator_rate, accumulator_noise_std=accumulator_noise_std,
             accumulator_threshold=accumulator_threshold, weight_init_scale=weight_init_scale, name=name)
 
     def _generate_indirect_layer(self):
-        # TODO: initial weights - does a hollow matrix make sense?
+        # TODO: initial weights - does a hollow matrix make sense? Yes, but with smaller initial values
+        matrix_size = 2 * self.num_features + self.indirect_layer_size
+        matrix = pnl.random_matrix(matrix_size, matrix_size, 2, -1) * self.weight_init_scale
+        np.fill_diagonal(matrix, 0)
+
         # TODO: why is the parameter here called enable_learning rather than learning?
         self.indirect_shape_layer = pnl.ContrastiveHebbianMechanism(
             input_size=self.num_features, hidden_size=self.indirect_layer_size, target_size=self.num_features,
-            separated=True,
+            separated=True, matrix=matrix,
             integrator_mode=self.integrator_mode, integration_rate=self.integration_rate,
-            noise=self._generate_noise_function(), learning_rate=self.indirect_learning_rate,
+            max_passes=1000,
+            noise=self._generate_noise_function(),
+            learning_rate=self.indirect_learning_rate,
             enable_learning=self.indirect_learning_rate != 0
         )
 
